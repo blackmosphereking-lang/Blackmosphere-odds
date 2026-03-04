@@ -1,95 +1,133 @@
-# config.py - Configuration constants for Blackmosphere FootMob
+# ════════════════════════════════════════════════════════════════════════════
+# FILE 1: config.py
+# ════════════════════════════════════════════════════════════════════════════
 
-# CSS styling for the app
+import streamlit as st
+
+# ── API Keys & Settings (loaded from Streamlit secrets) ───────────────────
+
+FOOTBALL_DATA_API_KEY = st.secrets.get("FOOTBALL_API_KEY", "")
+COSMIC_API_KEY = st.secrets.get("COSMIC_API_KEY", "")
+COSMIC_ENABLED = True
+
+# ── League Codes (Football-Data.org competition codes) ────────────────────
+
+LEAGUE_CODES = {
+    "Premier League": "PL",
+    "La Liga": "PD",
+    "Bundesliga": "BL1",
+    "Serie A": "SA",
+    "Ligue 1": "FL1",
+    "Eredivisie": "DED",
+    "Primeira Liga": "PPL",
+    "Championship": "ELC",
+    "Champions League": "CL",
+    "Europa League": "EL",
+    "FIFA World Cup": "WC",
+}
+
+# ── League Parameters (per-league tuning for prediction model) ────────────
+
+LEAGUE_PARAMS = {
+    "PL":  {"home_adv": 1.25, "draw_base": 0.24, "avg_goals": 2.85},
+    "PD":  {"home_adv": 1.20, "draw_base": 0.26, "avg_goals": 2.65},
+    "BL1": {"home_adv": 1.28, "draw_base": 0.23, "avg_goals": 3.10},
+    "SA":  {"home_adv": 1.22, "draw_base": 0.27, "avg_goals": 2.60},
+    "FL1": {"home_adv": 1.23, "draw_base": 0.25, "avg_goals": 2.70},
+    "DED": {"home_adv": 1.20, "draw_base": 0.24, "avg_goals": 3.00},
+    "PPL": {"home_adv": 1.22, "draw_base": 0.25, "avg_goals": 2.55},
+    "ELC": {"home_adv": 1.24, "draw_base": 0.27, "avg_goals": 2.60},
+    "CL":  {"home_adv": 1.15, "draw_base": 0.25, "avg_goals": 2.90},
+    "EL":  {"home_adv": 1.15, "draw_base": 0.26, "avg_goals": 2.75},
+    "WC":  {"home_adv": 1.10, "draw_base": 0.26, "avg_goals": 2.50},
+}
+
+DEFAULT_LEAGUE_PARAMS = {"home_adv": 1.20, "draw_base": 0.26, "avg_goals": 2.70}
+
+# ── CSS Styles ────────────────────────────────────────────────────────────
+
 CSS = """
 <style>
     .sidebar-logo {
         display: flex;
         align-items: center;
-        padding: 1rem 0;
-        margin-bottom: 1rem;
-        border-bottom: 1px solid #444;
+        gap: 12px;
+        padding: 16px;
     }
-    .logo-icon {
-        font-size: 2.5rem;
-        margin-right: 0.5rem;
+    .sidebar-logo .logo-icon {
+        font-size: 2rem;
     }
-    .logo-text h2 {
+    .sidebar-logo .logo-text h2 {
         margin: 0;
-        font-size: 1.5rem;
-        color: #FFD700;
+        color: #FFFFFF;
     }
-    .logo-text span {
-        color: #AAA;
+    .sidebar-logo .logo-text span {
+        color: #AAAAAA;
         font-size: 0.85rem;
     }
     .bankroll-card {
-        background: #1E1E1E;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1.5rem;
+        background: linear-gradient(135deg, #1a1a2e, #16213e);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 12px 0;
+        text-align: center;
     }
     .bankroll-card .label {
-        color: #AAA;
-        font-size: 0.9rem;
+        color: #AAAAAA;
+        font-size: 0.8rem;
+        text-transform: uppercase;
     }
     .bankroll-card .amount {
-        font-size: 1.8rem;
+        color: #00FF88;
+        font-size: 1.6rem;
         font-weight: bold;
-        color: #FFD700;
     }
     .responsible-banner {
-        background: #3A0E0E;
+        background: rgba(255, 80, 80, 0.15);
+        border: 1px solid rgba(255, 80, 80, 0.3);
+        border-radius: 8px;
+        padding: 12px;
+        margin: 12px 0;
+        font-size: 0.8rem;
         color: #FFAAAA;
-        padding: 0.75rem;
-        border-radius: 6px;
-        font-size: 0.85rem;
-        line-height: 1.4;
     }
     .main-header {
-        background: linear-gradient(135deg, #0F2027, #203A43, #2C5364);
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin-bottom: 1.5rem;
+        text-align: center;
+        padding: 24px 0;
     }
     .main-header h1 {
-        color: white;
+        font-size: 2.4rem;
         margin: 0;
-        font-size: 2.2rem;
     }
     .main-header p {
-        color: #DDD;
-        margin: 0.5rem 0 0;
+        color: #AAAAAA;
+        margin: 4px 0 0;
     }
-    .stMetric {
-        background: #1E1E1E;
-        border-radius: 8px;
-        padding: 1rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    .value-badge {
+        background: #00FF88;
+        color: #000000;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: bold;
     }
-    .stMetric label {
-        font-size: 1rem;
-        color: #AAA;
-    }
-    .stMetric .st-emotion-cache-1wivap2 {
-        font-size: 1.8rem;
-        color: #FFD700;
+    .cosmic-card {
+        background: linear-gradient(135deg, #1a0033, #0d001a);
+        border: 1px solid rgba(138, 43, 226, 0.3);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 8px 0;
     }
 </style>
 """
 
-# League codes mapping (display name -> API code)
-LEAGUE_CODES = {
-    "Premier League": "PL",
-    "La Liga": "PD",
-    "Serie A": "SA",
-    "Bundesliga": "BL1",
-    "Ligue 1": "FL1",
-    "Champions League": "CL",
-    "Europa League": "EL",
-    "EFL Championship": "CH",
-    "Other": "OT"
-}
+# ── Responsible Gambling Warning ──────────────────────────────────────────
 
-# Responsible gambling warning
-RG_WARNING = "⚠️ This app is for entertainment purposes only. Gambling involves risk. Never bet more than you can afford to lose."
+RG_WARNING = (
+    "⚠️ <strong>Gamble Responsibly:</strong> This tool is for entertainment "
+    "and informational purposes only. It is not affiliated with any bookmaker. "
+    "Never bet more than you can afford to lose. If you or someone you know "
+    "has a gambling problem, please seek help at "
+    '<a href="https://www.begambleaware.org" style="color:#FFDADA;">'
+    "www.begambleaware.org</a> or call 1-800-GAMBLER."
+)
