@@ -1,100 +1,114 @@
-# models.py – Enhanced Statistical Prediction Engine
+# models.py — Blackmosphere FootMob Edition
+# Match prediction model and Kelly Criterion staking
 
-import numpy as np
-from scipy.stats import poisson
-from datetime import date
-from api import fetch_matches, fetch_standings
-from config import LEAGUE_PARAMS, LEAGUE, PRIMARY_COLOR
-from cosmic import cosmic_verdict
+import math
+from typing import Dict
 
-# ── League Calibration ────────────────────────────────────────────────
-# Fixed for api.py import
+# ════════════════════════════════════════════════════════════════════════════
+# MATCH PREDICTION
+# ════════════════════════════════════════════════════════════════════════════
 
-def get_league_params(league_code: str) -> Dict:
-    """Get league parameters from config."""
-    return LEAGUE_PARAMS.get(league_code, LEAGUE_PARAMS["EPL"])
+def predict_match(league: str, home_strength: float, away_strength: float) -> Dict[str, float]:
+    """
+    Predict match outcome probabilities using strength ratings.
 
-def apply_league_adjustment(home_str: float, away_str: float, params: Dict) -> Tuple[float, float]:
-    """Apply league-specific adjustments to team strengths."""
-    league = params.get("league", "EPL")
-    home_mod = params.get("home_mod", 1.0)
-    away_mod = params.get("away_mod", 1.0)
-    hpa = LEAGUE_PARAMS.get(league, LEAGUE_PARAMS["EPL"])
-    return home_str * home_mod * (1 + hpa.get("home_advantage", 1.0)), away_str * away_mod * (1 - hpa.get("away_advantage", 0.0))
+    Args:
+        league: League name (e.g. "Premier League")
+        home_strength: Home team strength rating (0.0 - 2.0+)
+        away_strength: Away team strength rating (0.0 - 2.0+)
 
-# ── Enhanced Poisson Engine ────────────────────────────────────────────────
-# Fixed for api.py import
+    Returns:
+        Dict with keys: 'home', 'draw', 'away', 'h_odds', 'd_odds', 'a_odds'
+    """
+    # Home advantage factor
+    HOME_ADVANTAGE = 1.25
 
-def enhanced_poisson(home_str: float, away_str: float, params: Dict) -> Dict:
-    """Extended Poisson model with cosmic adjustment."""
-    home_mod, away_mod = apply_league_adjustment(home_str, away_str, params)
-    league = params.get("league", "EPL")
-    hpa = LEAGUE_PARAMS.get(league, LEAGUE_PARAMS["EPL"])
+    # Adjusted strengths
+    adj_home = home_strength * HOME_ADVANTAGE
+    adj_away = away_strength
 
-    # Base expected goals
-    hl = home_str * (1 + hpa.get("avg_goals", 2.0) * (1 + hpa.get("hha", 0.3))
-    al = away_str * (1 + hpa.get("avg_goals", 2.0) * (1 - hpa.get("haa", 0.3))
+    # Prevent division by zero
+    total = adj_home + adj_away
+    if total <= 0:
+        total = 2.0
+        adj_home = 1.0
+        adj_away = 1.0
 
-    # Cosmic modifier (fetch from config.py or cache results)
-    cosmic = params.get("cosmic", None)
-    if cosmic:
-        hl *= (1 + cosmic.get("goal_modifier", 0.0))
-        al *= (1 + cosmic.get("goal_modifier", 0.0))
+    # Raw win probabilities
+    home_raw = adj_home / total
+    away_raw = adj_away / total
 
-    # Build matrix with cosmic adjustments
-    M = poisson_matrix(hl, al)
-    hw, d, aw = poisson_outcomes(M)
-    tot = hw + d + aw
-    hw, d, aw = hw / tot, d / tot, aw / tot
+    # Draw probability derived from how close the teams are in strength
+    strength_diff = abs(adj_home - adj_away)
+    draw_base = 0.26  # Average draw rate in top leagues
+    draw_prob = max(0.08, draw_base - (strength_diff * 0.12))
 
-    # Enhanced markets
-    btts = poisson_probability(M)
-    o25 = poisson_probability(M, 2.5)
-    dc = (hw + d) if params.get("market", "1x2") == "home" else (d + aw)
-    dc_odds = 1 / max(dc, 0.001)
-    odds = {
-        "home": 1 / max(hw, 0.001),
-        "draw": 1 / max(d, 0.001),
-        "away": 1 / max(aw, 0.001),
-        "btts": 1 / max(btts, 0.001),
-        "odds": {"1x2": dc_odds, "draw": 1/d_odds, "away": 1/aw_odds}
+    # Scale home/away to account for draw probability
+    remaining = 1.0 - draw_prob
+    home_prob = home_raw * remaining
+    away_prob = away_raw * remaining
+
+    # Normalize to ensure probabilities sum to 1.0
+    prob_total = home_prob + draw_prob + away_prob
+    home_prob /= prob_total
+    draw_prob /= prob_total
+    away_prob /= prob_total
+
+    # Convert to decimal odds (with margin for realism)
+    margin = 1.05  # 5% bookmaker margin
+    h_odds = round(margin / home_prob, 2) if home_prob > 0 else 99.0
+    d_odds = round(margin / draw_prob, 2) if draw_prob > 0 else 99.0
+    a_odds = round(margin / away_prob, 2) if away_prob > 0 else 99.0
+
+    return {
+        'home': round(home_prob, 4),
+        'draw': round(draw_prob, 4),
+        'away': round(away_prob, 4),
+        'h_odds': h_odds,
+        'd_odds': d_odds,
+        'a_odds': a_odds,
     }
-    return odds
 
-# ── Helper Functions ────────────────────────────────────────────────
-# Fixed for api.py import
 
-def poisson_matrix(hl: float, al: float) -> np.ndarray:
-    """Build poisson matrix with league calibration."""
-    M = np.zeros((12, 12))
-    for i in range(12):
-        for j in range(12):
-            M[i][j] = poisson.pmf(i, hl) * poisson.poisson(al, j)
-    return M
+# ════════════════════════════════════════════════════════════════════════════
+# KELLY CRITERION STAKING
+# ════════════════════════════════════════════════════════════════════════════
 
-def poisson_outcomes(M: np.ndarray) -> Tuple[float, float, float]:
-    """Calculate 1x2 outcomes from matrix."""
-    hw = np.sum(M[1:, 1:], axis=1)
-    d = np.sum(M[1:, 1:], axis=1)
-    aw = np.sum(M[1:, :-1:], axis=0)
-    return hw.mean(), d.mean(), aw.mean()
+def kelly_stake(
+    probability: float,
+    odds: float,
+    bankroll: float,
+    fraction: float = 0.25
+) -> float:
+    """
+    Calculate recommended stake using fractional Kelly Criterion.
 
-def poisson_probability(M: np.ndarray, line: float = 2.5) -> float:
-    """Calculate over/under probability."""
-    return np.sum(M.sum(axis=1) > line) / M.size
+    Args:
+        probability: Estimated true probability of outcome (0.0 - 1.0)
+        odds: Decimal odds offered by bookmaker (e.g. 2.50)
+        bankroll: Current bankroll amount
+        fraction: Kelly fraction to use (default 0.25 = quarter-Kelly)
 
-# ── Cosmic Integration ────────────────────────────────────────────────
-# Fixed for config.py import
-
-def get_cosmic_adjustment(home: str, away: str, league: str) -> float:
-    """Get cosmic bias as modifier for statistical model."""
-    try:
-        if COSMIC_ENABLED:
-            response = requests.get(f"{COSMIC_BASE_URL}/adjustment/{league}/{home}/{away}", headers={"Authorization": COSMIC_API_KEY}
-            data = response.json()
-            return data.get("bias", 0.0)
-    except Exception as e:
-        st.warning(f" Cosmic API Error: {e}
-        Using fallback model calibration)
-        ")
+    Returns:
+        Recommended stake amount (floored to 0 if negative edge)
+    """
+    if odds <= 1.0 or probability <= 0.0 or probability >= 1.0 or bankroll <= 0:
         return 0.0
+
+    # Kelly formula: f* = (bp - q) / b
+    # where b = odds - 1, p = win probability, q = 1 - p
+    b = odds - 1.0
+    p = probability
+    q = 1.0 - p
+
+    kelly_fraction = (b * p - q) / b
+
+    # No bet if negative edge
+    if kelly_fraction <= 0:
+        return 0.0
+
+    # Apply fractional Kelly and round to 2 decimal places
+    stake = round(bankroll * kelly_fraction * fraction, 2)
+
+    # Cap at bankroll
+    return min(stake, bankroll)
