@@ -1,114 +1,88 @@
-# models.py — Blackmosphere FootMob Edition
-# Match prediction model and Kelly Criterion staking
+# models.py - Prediction models for match outcomes
 
-import math
-from typing import Dict
+from typing import Dict, Any
+import random
 
-# ════════════════════════════════════════════════════════════════════════════
-# MATCH PREDICTION
-# ════════════════════════════════════════════════════════════════════════════
-
-def predict_match(league: str, home_strength: float, away_strength: float) -> Dict[str, float]:
+def predict_match(league: str, home_strength: float, away_strength: float) -> Dict[str, Any]:
     """
-    Predict match outcome probabilities using strength ratings.
-
-    Args:
-        league: League name (e.g. "Premier League")
-        home_strength: Home team strength rating (0.0 - 2.0+)
-        away_strength: Away team strength rating (0.0 - 2.0+)
-
-    Returns:
-        Dict with keys: 'home', 'draw', 'away', 'h_odds', 'd_odds', 'a_odds'
+    Predict match outcome probabilities based on team strengths.
+    Returns a dictionary with probabilities and calculated odds.
     """
-    # Home advantage factor
-    HOME_ADVANTAGE = 1.25
+    try:
+        # Base probabilities (will be adjusted by strength difference)
+        base_home = 0.45
+        base_draw = 0.28
+        base_away = 0.27
+        
+        # Calculate strength difference (normalized)
+        strength_diff = (home_strength - away_strength) / max(home_strength + away_strength, 1)
+        
+        # Adjust probabilities based on strength difference
+        home_prob = base_home + (strength_diff * 0.3)
+        away_prob = base_away - (strength_diff * 0.3)
+        
+        # Ensure probabilities stay within reasonable bounds
+        home_prob = max(0.1, min(0.8, home_prob))
+        away_prob = max(0.1, min(0.8, away_prob))
+        
+        # Calculate draw probability as the remainder
+        draw_prob = 1.0 - home_prob - away_prob
+        draw_prob = max(0.1, min(0.4, draw_prob))
+        
+        # Recalculate to ensure sum is exactly 1.0
+        total = home_prob + draw_prob + away_prob
+        home_prob /= total
+        draw_prob /= total
+        away_prob /= total
+        
+        # Calculate implied odds (with margin)
+        home_odds = round(1.0 / home_prob * 1.05, 2)  # 5% margin
+        
+        return {
+            "home": home_prob,
+            "draw": draw_prob,
+            "away": away_prob,
+            "h_odds": home_odds,
+            "d_odds": round(1.0 / draw_prob * 1.05, 2),
+            "a_odds": round(1.0 / away_prob * 1.05, 2)
+        }
+    except Exception as e:
+        print(f"Prediction error: {str(e)}")
+        # Return safe fallback values
+        return {
+            "home": 0.40,
+            "draw": 0.30,
+            "away": 0.30,
+            "h_odds": 2.50,
+            "d_odds": 3.33,
+            "a_odds": 3.33
+        }
 
-    # Adjusted strengths
-    adj_home = home_strength * HOME_ADVANTAGE
-    adj_away = away_strength
-
-    # Prevent division by zero
-    total = adj_home + adj_away
-    if total <= 0:
-        total = 2.0
-        adj_home = 1.0
-        adj_away = 1.0
-
-    # Raw win probabilities
-    home_raw = adj_home / total
-    away_raw = adj_away / total
-
-    # Draw probability derived from how close the teams are in strength
-    strength_diff = abs(adj_home - adj_away)
-    draw_base = 0.26  # Average draw rate in top leagues
-    draw_prob = max(0.08, draw_base - (strength_diff * 0.12))
-
-    # Scale home/away to account for draw probability
-    remaining = 1.0 - draw_prob
-    home_prob = home_raw * remaining
-    away_prob = away_raw * remaining
-
-    # Normalize to ensure probabilities sum to 1.0
-    prob_total = home_prob + draw_prob + away_prob
-    home_prob /= prob_total
-    draw_prob /= prob_total
-    away_prob /= prob_total
-
-    # Convert to decimal odds (with margin for realism)
-    margin = 1.05  # 5% bookmaker margin
-    h_odds = round(margin / home_prob, 2) if home_prob > 0 else 99.0
-    d_odds = round(margin / draw_prob, 2) if draw_prob > 0 else 99.0
-    a_odds = round(margin / away_prob, 2) if away_prob > 0 else 99.0
-
-    return {
-        'home': round(home_prob, 4),
-        'draw': round(draw_prob, 4),
-        'away': round(away_prob, 4),
-        'h_odds': h_odds,
-        'd_odds': d_odds,
-        'a_odds': a_odds,
-    }
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# KELLY CRITERION STAKING
-# ════════════════════════════════════════════════════════════════════════════
-
-def kelly_stake(
-    probability: float,
-    odds: float,
-    bankroll: float,
-    fraction: float = 0.25
-) -> float:
+def kelly_stake(probability: float, odds: float, bankroll: float = 1000.0, kelly_fraction: float = 0.5) -> float:
     """
-    Calculate recommended stake using fractional Kelly Criterion.
-
-    Args:
-        probability: Estimated true probability of outcome (0.0 - 1.0)
-        odds: Decimal odds offered by bookmaker (e.g. 2.50)
-        bankroll: Current bankroll amount
-        fraction: Kelly fraction to use (default 0.25 = quarter-Kelly)
-
-    Returns:
-        Recommended stake amount (floored to 0 if negative edge)
+    Calculate optimal stake using the Kelly Criterion.
+    Returns stake as a percentage of bankroll.
     """
-    if odds <= 1.0 or probability <= 0.0 or probability >= 1.0 or bankroll <= 0:
+    try:
+        if odds <= 1.0 or probability <= 0 or probability >= 1:
+            return 0.0
+            
+        # Kelly formula: f = (bp - q) / b
+        # where b = odds - 1, p = probability, q = 1 - p
+        b = odds - 1
+        p = probability
+        q = 1 - p
+        
+        kelly_percent = (b * p - q) / b
+        
+        # Only bet if positive expectation
+        if kelly_percent <= 0:
+            return 0.0
+            
+        # Apply fraction of Kelly (to reduce volatility)
+        stake_percent = kelly_percent * kelly_fraction
+        
+        return min(stake_percent, 0.1)  # Cap at 10% of bankroll
+    except Exception as e:
+        print(f"Kelly calculation error: {str(e)}")
         return 0.0
-
-    # Kelly formula: f* = (bp - q) / b
-    # where b = odds - 1, p = win probability, q = 1 - p
-    b = odds - 1.0
-    p = probability
-    q = 1.0 - p
-
-    kelly_fraction = (b * p - q) / b
-
-    # No bet if negative edge
-    if kelly_fraction <= 0:
-        return 0.0
-
-    # Apply fractional Kelly and round to 2 decimal places
-    stake = round(bankroll * kelly_fraction * fraction, 2)
-
-    # Cap at bankroll
-    return min(stake, bankroll)
