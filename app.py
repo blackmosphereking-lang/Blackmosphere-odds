@@ -1,973 +1,134 @@
-# app.py – Modern UI with betting slip, odds display, and cosmic overlay
+# app.py — Blackmosphere FootMob Edition (FIXED)
 
 import streamlit as st
-from datetime import date
-from api import fetch_matches, fetch_standings
-from models import enhanced_poisson, kelly_stake
-from config import RG_WARNING, LEAGUE_PARAMS
+import pandas as pd
+from datetime import datetime, date
+from typing import Dict, List
+
+# Direct imports - no more missing constants
+from config import CSS, LEAGUE_CODES, RG_WARNING
+from models import predict_match, kelly_stake
 from cosmic import cosmic_verdict
-from sources import sofa_search_team
+from api import fetch_matches, fetch_standings
 
-# ── Modern UI Setup ────────────────────────────────────────────────
-# Fixed config imports
+# Try importing sources (optional)
+try:
+    from sources import sofa_today_events, sofa_team_last5
+    SOFA_OK = True
+except Exception:
+    SOFA_OK = False
 
-CSS = """
-/* FootMob UI Styles */
-/* Injected via config.py */
-"""
+# ════════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ════════════════════════════════════════════════════════════════════════════
+
+st.set_page_config(
+    page_title="Blackmosphere | AI + Cosmic Predictions",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.markdown(CSS, unsafe_allow_html=True)
 
-# ── Top Bar
-c1, c2, c3 = st.columns([3, 3, 2])
-c1.title(f"<h1 style='color:{PRIMARY_COLOR}'>Blackmosphere AI</h1>", unsafe_allow_html=True)
-st.session_state.selected_date = c2.date_input("Select Date", value=date.today(), format="YYYY-MM-DD")
-league_filter = c3.selectbox("League", ["All"] + list(LEAGUE.keys()), index=0)
-st.markdown("""
-<div style='background-color:#151924; padding:16px; border-radius:18px; margin-top:-24px; color:#9BA0B21; font-size:14px; letter-spacing:-0.2px; text-align:center'>
-⚠️ Gambling can be addictive. Play responsibly. View betting limits and help at:
-<a href='https://www.gamblersanonymous.org' style='color:#D5A021;'>Gambler's Anonymous</a>
-</div>
-""", unsafe_allow_html=True)
+# ════════════════════════════════════════════════════════════════════════════
+# SESSION STATE
+# ════════════════════════════════════════════════════════════════════════════
 
-# ── Main Content Area
-st.markdown(f"<h2 style='color:{PRIMARY_COLOR}'>Blackmosphere AI</h1>", unsafe_allow_html=True)
-st.markdown(f"<div style='background-color:#1A1F2E; padding:24px; border-radius:18px; margin-bottom:16px; border-left:3px solid #D5A021
-)
-st.write("Live odds loading... Football-data.org API Key needed for matches & standings
-         SofaScore API Key for live odds
-         Pinnacle API for betting lines
-         StatsBomb for historical data
+_defaults = {
+    'parlay': [],
+    'bankroll': 1000.0,
+    'bet_history': [],
+    'selected_date': date.today(),
+    'cosmic_toggle': True,
+    'value_threshold': 0.05,
+    'filters': {'show_value_only': False, 'min_probability': 0.0}
+}
 
-         <div style='color:#9BA0B21; font-size:12px; margin-top:8px;'>Please set your API keys in config.py</div>
-         <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Visit dashboard</a> →
-         <a href='https://docs.blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >API docs</a> →
-         <a href='https://www.gamblersanonymous.org' style='color:#FFD700' target='_blank'
-     >Responsible Gaming</a> →
-         <a href='https://github.com/blackmosphere/blackmosphere-odds
-         style='color:#3CB9FF' target='_blank'
-     >GitHub repo</a> →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Premium Features</a> →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a> →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#2FD9C5' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021' target='_blank'
-     >Live Dashboard</a →
-     <a href='https://blackmosphere.ai' style='color:#D5A021
+for k, v in _defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+API_KEY = st.secrets.get("FOOTBALL_API_KEY", "")
+
+# ════════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ════════════════════════════════════════════════════════════════════════════
+
+def load_today_matches() -> Dict[str, List[Dict]]:
+    """Load today's matches grouped by league."""
+    if not API_KEY:
+        # Fallback to SofaScore if no API key
+        if SOFA_OK:
+            events = sofa_today_events()
+            if not events:
+                return {}
+            grouped = {}
+            for e in events:
+                league = e.get('tournament', {}).get('category', {}).get('name', 'Other')
+                if league not in grouped:
+                    grouped[league] = []
+                grouped[league].append({
+                    'id': e.get('id'),
+                    'home': e.get('homeTeam', {}).get('name', 'TBD'),
+                    'away': e.get('awayTeam', {}).get('name', 'TBD'),
+                    'home_id': e.get('homeTeam', {}).get('id', 0),
+                    'away_id': e.get('awayTeam', {}).get('id', 0),
+                    'time': e.get('time', '00:00'),
+                    'league': league,
+                    'venue': e.get('venue', {}).get('name', 'TBD'),
+                    'status': 'Scheduled'
+                })
+            return grouped
+        return {}
+
+    # Use Football Data API
+    matches = fetch_matches(API_KEY, days=7)
+
+    grouped = {}
+    for m in matches:
+        league = m.get('competition', 'Other')
+        if league not in grouped:
+            grouped[league] = []
+        utc = m.get('utcDate', '')
+        try:
+            dt = datetime.fromisoformat(utc.replace('Z', '+00:00'))
+            time_str = dt.strftime('%H:%M')
+        except:
+            time_str = '00:00'
+
+        grouped[league].append({
+            'id': m.get('id'),
+            'home': m.get('homeTeam', {}).get('name', 'TBD'),
+            'away': m.get('awayTeam', {}).get('name', 'TBD'),
+            'home_id': m.get('homeTeam', {}).get('id', 0),
+            'away_id': m.get('awayTeam', {}).get('id', 0),
+            'time': time_str,
+            'league': league,
+            'venue': 'Stadium',
+            'status': m.get('status', {}).get('description', 'Scheduled')
+        })
+    return grouped
+
+def get_team_strength(team_name: str, league_code: str = 'PL') -> float:
+    """Get team strength from standings."""
+    if not API_KEY:
+        return 1.0
+    standings = fetch_standings(API_KEY, league_code)
+    return standings.get(team_name, 1.0)
+
+def calculate_value(prob: float, odds: float) -> tuple:
+    """Calculate edge and value status."""
+    if odds <= 0:
+        return 0.0, False
+    implied = 1 / odds
+    edge = prob - implied
+    is_value = edge > st.session_state.value_threshold
+    return edge, is_value
+
+def add_to_slip(name: str, odds: float, prob: float):
+    """Add selection to bet slip."""
+    st.session_state.parlay.append({
+        "name": name,
+        "odds": round
 \<Streaming stoppped because the conversation grew too long for this model\>
