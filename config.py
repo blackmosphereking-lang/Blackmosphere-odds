@@ -1,62 +1,105 @@
-# config.py – App Configurations
+# config.py — Blackmosphere FootMob Edition
 
-import os
-from typing import Dict, Optional
+# ════════════════════════════════════════════════════════════════════════════
+# CSS STYLES
+# ════════════════════════════════════════════════════════════════════════════
 
-# ── API Keys ─────────────────────────────────────────────────────────────────
-
-FOOTBALL_DATA_API_KEY = os.getenv("FOOTBALL_DATA_API_KEY", "")
-SOFA_SCORE_API_KEY = os.getenv("SOFA_SCORE_API_KEY", "")
-Pinnacle_API_KEY = os.getenv("PINNACLE_API_KEY", "")
-STATSBOMB_API_KEY = os.getenv("STATSBOMB_API_KEY", "")
-
-# ── League Parameters ────────────────────────────────────────────────────────
-# (Fix for models.py)
-LEAGUE_PARAMS = {
-    "EPL": {"home_advantage": 1.4, "avg_goals": 2.7, "corner_base": 10.8, "booking_base": 3.2, "hha": 0.35},
-    "La Liga": {"home_advantage": 1.3, "avg_goals": 2.5, "corner_base": 9.6, "booking_base": 3.5, "hha": 0.32},
-    "Bundesliga": {"home_advantage": 1.2, "avg_goals": 2.0, "corner_base": 10.0, "booking_base": 3.0, "hha": 0.28},
-    "Serie A": {"home_advantage": 1.1, "avg_goals": 2.2, "corner_base": 9.2, "booking_base": 3.8, "hha": 0.28},
-    "Ligue 1": {"home_advantage": 1.0, "avg_goals": 2.3, "corner_base": 9.5, "booking_base": 3.6, "hha": 0.30},
-    "Champions League": {"home_advantage": 1.5, "avg_goals": 2.4, "corner_base": 10.0, "booking_base": 2.8, "hha": 0.25},
-    "UEFA Cup": {"home_advantage": 1.3, "avg_goals": 2.1, "corner_base": 9.7, "booking_base": 3.4, "hha": 0.29}
-}
-
-# ── Odds API Configuration ────────────────────────────────────────────────
-# (Fix for api.py)
-LEAGUE Odds API Keys (Pinnacle, SofaScore, etc.)
-LEAGUE Odds API Base URLs
-LEAGUE Odds API Endpoint Templates
-
-# ── Prediction Calibration ────────────────────────────────────────────────
-# (Fix for models.py)
-LEAGUE Home Team Strength Multipliers
-LEAGUE Away Team Strength Multipliers
-LEAGUE Defensive Adjustments
-
-# ── Responsible Gaming ────────────────────────────────────────────────
-# (Fix for app.py)
-RG_WARNING = """
-⚠️ Gambling can be addictive. Play responsibly. View betting limits and help at:
-<a href='https://www.gamblersanonymous.org' style='color:#D5A021;'>Gambler's Anonymous</a>
+CSS = """
+<style>
+    .sidebar-logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+    }
+    .sidebar-logo .logo-icon {
+        font-size: 2rem;
+    }
+    .sidebar-logo .logo-text h2 {
+        margin: 0;
+        color: #FFFFFF;
+    }
+    .sidebar-logo .logo-text span {
+        color: #AAAAAA;
+        font-size: 0.85rem;
+    }
+    .bankroll-card {
+        background: linear-gradient(135deg, #1a1a2e, #16213e);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 12px 0;
+        text-align: center;
+    }
+    .bankroll-card .label {
+        color: #AAAAAA;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+    }
+    .bankroll-card .amount {
+        color: #00FF88;
+        font-size: 1.6rem;
+        font-weight: bold;
+    }
+    .responsible-banner {
+        background: rgba(255, 80, 80, 0.15);
+        border: 1px solid rgba(255, 80, 80, 0.3);
+        border-radius: 8px;
+        padding: 12px;
+        margin: 12px 0;
+        font-size: 0.8rem;
+        color: #FFAAAA;
+    }
+    .main-header {
+        text-align: center;
+        padding: 24px 0;
+    }
+    .main-header h1 {
+        font-size: 2.4rem;
+        margin: 0;
+    }
+    .main-header p {
+        color: #AAAAAA;
+        margin: 4px 0 0;
+    }
+</style>
 """
 
-# ── Cosmic Toggle ────────────────────────────────────────────────────────
-# (Fix for cosmic.py)
-COSMIC_ENABLED = True
-COSMIC_BASE_URL = "https://cosmic.api.blackmosphere.ai"
-COSMIC_API_KEY = os.getenv("COSMIC_API_KEY", "")
+# ════════════════════════════════════════════════════════════════════════════
+# LEAGUE CODES (Football-Data.org competition codes)
+# ════════════════════════════════════════════════════════════════════════════
 
-# ── UI Config ────────────────────────────────────────────────────────
-# (Fix for app.py)
-PRIMARY_COLOR = "#D5A021"  # Gold
-PRIMARY_URL = "https://blackmosphere.ai"
-BRANDING_URL = "https://blackmosphere.ai/branding/"
-
-# ── Data Paths ────────────────────────────────────────────────────────
-# (Fix for app.py)
-DATA_PATHS = {
-    "history": "data/history.parquet",
-    "predictions": "data/predictions.parquet",
-    "cosmic_cache": "data/cosmic.json"
+LEAGUE_CODES = {
+    "Premier League": "PL",
+    "La Liga": "PD",
+    "Bundesliga": "BL1",
+    "Serie A": "SA",
+    "Ligue 1": "FL1",
+    "Eredivisie": "DED",
+    "Primeira Liga": "PPL",
+    "Championship": "ELC",
+    "Champions League": "CL",
+    "Europa League": "EL",
+    "FIFA World Cup": "WC",
 }
+
+# ════════════════════════════════════════════════════════════════════════════
+# LEAGUE Odds API Keys (Pinnacle, SofaScore, etc.)            <-- LINE 27 FIX
+# ════════════════════════════════════════════════════════════════════════════
+
+# Add any odds-related API keys or mappings here as needed.
+# Example:
+# ODDS_API_KEYS = {
+#     "pinnacle": "your-pinnacle-key",
+#     "sofascore": "your-sofascore-key",
+# }
+
+# ════════════════════════════════════════════════════════════════════════════
+# RESPONSIBLE GAMBLING WARNING
+# ════════════════════════════════════════════════════════════════════════════
+
+RG_WARNING = (
+    "⚠️ Gamble Responsibly: This tool is for entertainment and informational "
+    "purposes only. It is not affiliated with any bookmaker. Never bet more "
+    "than you can afford to lose. If you or someone you know has a gambling "
+    "problem, please seek help at www.begambleaware.org or call 1-800-GAMBLER."
+)
