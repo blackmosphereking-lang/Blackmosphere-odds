@@ -1,125 +1,52 @@
-# config.py — Blackmosphere FootMob Edition (COMPLETE)
+# api.py - Football data API integration
 
-import streamlit as st
+import requests
+import time
+from typing import Dict, List, Any
 
-# ════════════════════════════════════════════════════════════════════════════
-# API KEYS & SETTINGS (loaded from Streamlit secrets)
-# ════════════════════════════════════════════════════════════════════════════
+def fetch_matches(api_key: str, days: int = 7) -> List[Dict[str, Any]]:
+    """
+    Fetch upcoming matches from Football Data API.
+    Returns empty list on failure to prevent app crashes.
+    """
+    try:
+        headers = {"X-Auth-Token": api_key}
+        url = f"http://api.football-data.org/v4/matches?dateFrom={time.strftime('%Y-%m-%d')}&dateTo={time.strftime('%Y-%m-%d', time.localtime(time.time() + days * 86400))}"
+        
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        if "matches" in data:
+            return data["matches"]
+        return []
+    except Exception as e:
+        print(f"API Error fetching matches: {str(e)}")
+        return []
 
-FOOTBALL_DATA_API_KEY = st.secrets.get("FOOTBALL_API_KEY", "")
-COSMIC_API_KEY = st.secrets.get("COSMIC_API_KEY", "")
-COSMIC_ENABLED = True
-
-# ════════════════════════════════════════════════════════════════════════════
-# LEAGUE CODES (Football-Data.org competition codes)
-# ════════════════════════════════════════════════════════════════════════════
-
-LEAGUE_CODES = {
-    "Premier League": "PL",
-    "La Liga": "PD",
-    "Bundesliga": "BL1",
-    "Serie A": "SA",
-    "Ligue 1": "FL1",
-    "Eredivisie": "DED",
-    "Primeira Liga": "PPL",
-    "Championship": "ELC",
-    "Champions League": "CL",
-    "Europa League": "EL",
-    "FIFA World Cup": "WC",
-}
-
-# ════════════════════════════════════════════════════════════════════════════
-# LEAGUE PARAMS (per-league tuning for prediction model)
-# ════════════════════════════════════════════════════════════════════════════
-
-LEAGUE_PARAMS = {
-    "PL":  {"home_adv": 1.25, "draw_base": 0.24, "avg_goals": 2.85},
-    "PD":  {"home_adv": 1.20, "draw_base": 0.26, "avg_goals": 2.65},
-    "BL1": {"home_adv": 1.28, "draw_base": 0.23, "avg_goals": 3.10},
-    "SA":  {"home_adv": 1.22, "draw_base": 0.27, "avg_goals": 2.60},
-    "FL1": {"home_adv": 1.23, "draw_base": 0.25, "avg_goals": 2.70},
-    "DED": {"home_adv": 1.20, "draw_base": 0.24, "avg_goals": 3.00},
-    "PPL": {"home_adv": 1.22, "draw_base": 0.25, "avg_goals": 2.55},
-    "ELC": {"home_adv": 1.24, "draw_base": 0.27, "avg_goals": 2.60},
-    "CL":  {"home_adv": 1.15, "draw_base": 0.25, "avg_goals": 2.90},
-    "EL":  {"home_adv": 1.15, "draw_base": 0.26, "avg_goals": 2.75},
-    "WC":  {"home_adv": 1.10, "draw_base": 0.26, "avg_goals": 2.50},
-}
-
-# Default params for unknown leagues
-DEFAULT_LEAGUE_PARAMS = {"home_adv": 1.20, "draw_base": 0.26, "avg_goals": 2.70}
-
-# ════════════════════════════════════════════════════════════════════════════
-# CSS STYLES
-# ════════════════════════════════════════════════════════════════════════════
-
-CSS = """
-<style>
-    .sidebar-logo {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px;
-    }
-    .sidebar-logo .logo-icon {
-        font-size: 2rem;
-    }
-    .sidebar-logo .logo-text h2 {
-        margin: 0;
-        color: #FFFFFF;
-    }
-    .sidebar-logo .logo-text span {
-        color: #AAAAAA;
-        font-size: 0.85rem;
-    }
-    .bankroll-card {
-        background: linear-gradient(135deg, #1a1a2e, #16213e);
-        border-radius: 12px;
-        padding: 16px;
-        margin: 12px 0;
-        text-align: center;
-    }
-    .bankroll-card .label {
-        color: #AAAAAA;
-        font-size: 0.8rem;
-        text-transform: uppercase;
-    }
-    .bankroll-card .amount {
-        color: #00FF88;
-        font-size: 1.6rem;
-        font-weight: bold;
-    }
-    .responsible-banner {
-        background: rgba(255, 80, 80, 0.15);
-        border: 1px solid rgba(255, 80, 80, 0.3);
-        border-radius: 8px;
-        padding: 12px;
-        margin: 12px 0;
-        font-size: 0.8rem;
-        color: #FFAAAA;
-    }
-    .main-header {
-        text-align: center;
-        padding: 24px 0;
-    }
-    .main-header h1 {
-        font-size: 2.4rem;
-        margin: 0;
-    }
-    .main-header p {
-        color: #AAAAAA;
-        margin: 4px 0 0;
-    }
-</style>
-"""
-
-# ════════════════════════════════════════════════════════════════════════════
-# RESPONSIBLE GAMBLING WARNING
-# ════════════════════════════════════════════════════════════════════════════
-
-RG_WARNING = (
-    "⚠️ Gamble Responsibly: This tool is for entertainment and informational "
-    "purposes only. It is not affiliated with any bookmaker. Never bet more "
-    "than you can afford to lose. If you or someone you know has a gambling "
-    "problem, please seek help at www.begambleaware.org or call 1-800-GAMBLER."
-)
+def fetch_standings(api_key: str, league_code: str) -> Dict[str, float]:
+    """
+    Fetch league standings and calculate team strength metrics.
+    Returns empty dict on failure.
+    """
+    try:
+        headers = {"X-Auth-Token": api_key}
+        url = f"http://api.football-data.org/v4/competitions/{league_code}/standings"
+        
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        
+        standings = {}
+        if "standings" in data and len(data["standings"]) > 0:
+            for team in data["standings"][0]["table"]:
+                team_name = team["team"]["name"]
+                # Simple strength metric: points + goal difference / 10
+                points = team["points"]
+                goal_diff = team["goalDifference"]
+                standings[team_name] = points + (goal_diff / 10.0)
+                
+        return standings
+    except Exception as e:
+        print(f"API Error fetching standings: {str(e)}")
+        return {}
