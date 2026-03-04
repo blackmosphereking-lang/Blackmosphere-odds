@@ -1,78 +1,72 @@
-# sources.py - Optional SofaScore integration
+# ════════════════════════════════════════════════════════════════════════════
+# FILE 5: sources.py (optional — SofaScore fallback)
+# ════════════════════════════════════════════════════════════════════════════
 
 import requests
-from typing import List, Dict, Any
+from typing import Dict, List, Optional
+from datetime import date
 
-def sofa_today_events() -> List[Dict[str, Any]]:
+# ── SofaScore API (unofficial, may break) ─────────────────────────────────
+
+SOFA_BASE = "https://api.sofascore.com/api/v1"
+
+
+def sofa_today_events() -> List[Dict]:
     """
-    Fetch today's events from SofaScore API (free tier).
-    Returns empty list on failure.
+    Fetch today's football events from SofaScore.
+
+    Returns:
+        List of event dicts, or empty list on failure.
     """
+    today = date.today().isoformat()
+    url = f"{SOFA_BASE}/sport/football/scheduled-events/{today}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
     try:
-        url = "https://api.sofascore.com/api/v1/sport/football/events/live"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        events = []
-        if "events" in data:
-            for event in data["events"]:
-                events.append({
-                    "id": event["id"],
-                    "time": event.get("startTimestamp", 0),
-                    "homeTeam": {
-                        "id": event["homeTeam"]["id"],
-                        "name": event["homeTeam"]["name"]
-                    },
-                    "awayTeam": {
-                        "id": event["awayTeam"]["id"],
-                        "name": event["awayTeam"]["name"]
-                    },
-                    "tournament": {
-                        "category": {
-                            "name": event["tournament"]["category"]["name"]
-                        }
-                    },
-                    "venue": {
-                        "name": event.get("venue", {}).get("stadium", {}).get("name", "Unknown Venue")
-                    }
-                })
-        return events
-    except Exception as e:
-        print(f"SofaScore API error: {str(e)}")
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("events", [])
+    except requests.RequestException:
+        return []
+    except (ValueError, KeyError):
         return []
 
-def sofa_team_last5(team_id: int) -> List[Dict[str, Any]]:
+
+def sofa_team_last5(team_id: int) -> List[Dict]:
     """
-    Fetch last 5 matches for a team from SofaScore.
-    Returns empty list on failure.
+    Fetch the last 5 matches for a team from SofaScore.
+
+    Args:
+        team_id: SofaScore team ID.
+
+    Returns:
+        List of recent match dicts, or empty list on failure.
     """
+    if not team_id:
+        return []
+    url = f"{SOFA_BASE}/team/{team_id}/events/last/0"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
     try:
-        url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/5"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        events = []
-        if "events" in data:
-            for event in data["events"]:
-                events.append({
-                    "id": event["id"],
-                    "homeTeam": event["homeTeam"]["name"],
-                    "awayTeam": event["awayTeam"]["name"],
-                    "homeScore": event["homeScore"]["current"],
-                    "awayScore": event["awayScore"]["current"],
-                    "tournament": event["tournament"]["name"]
-                })
-        return events
-    except Exception as e:
-        print(f"SofaScore team history error: {str(e)}")
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        events = data.get("events", [])
+        return events[:5]
+    except requests.RequestException:
+        return []
+    except (ValueError, KeyError):
         return []
