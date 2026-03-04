@@ -1,45 +1,78 @@
-# cosmic.py - Cosmic prediction enhancements
+# ════════════════════════════════════════════════════════════════════════════
+# FILE 3: cosmic.py
+# ════════════════════════════════════════════════════════════════════════════
 
-from datetime import datetime
-from typing import Dict, Any
+import hashlib
+from datetime import date
 
-def cosmic_verdict(home_team: str, away_team: str, base_prediction: Dict[str, float]) -> Dict[str, float]:
+# ── Cosmic Themes ─────────────────────────────────────────────────────────
+
+_PLANETS = [
+    "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
+    "Neptune", "Uranus", "Pluto", "Moon", "Sun",
+]
+
+_ELEMENTS = ["Fire", "Water", "Earth", "Air"]
+
+_VERDICTS = [
+    "The celestial alignment strongly favors the home side today.",
+    "Away energy is surging — the visitors carry cosmic momentum.",
+    "A tense equilibrium in the stars suggests a hard-fought draw.",
+    "Mars in retrograde hints at defensive masterclasses on both sides.",
+    "Jupiter's expansion energy points toward a high-scoring affair.",
+    "Saturn's discipline suggests a tight, low-scoring contest.",
+    "Venus brings harmony — expect beautiful football from both teams.",
+    "Mercury's speed favors the team with the faster counterattack.",
+    "The Moon's phase amplifies home crowd energy tonight.",
+    "Neptune clouds judgment — an upset is written in the stars.",
+    "Pluto's transformative energy signals a turning point for the underdog.",
+    "Uranus brings chaos — expect the unexpected in this fixture.",
+    "Sun energy radiates confidence for the league leaders.",
+    "A fire-water clash in the zodiac — passion meets composure.",
+    "Earth signs dominate — the more grounded team will prevail.",
+    "Air signs are ascendant — creativity and flair will decide this one.",
+]
+
+_CONFIDENCE = [
+    "🌟 Cosmic Confidence: HIGH",
+    "✨ Cosmic Confidence: MODERATE",
+    "🌙 Cosmic Confidence: LOW — tread carefully",
+    "☄️ Cosmic Confidence: VOLATILE — anything can happen",
+]
+
+
+def cosmic_verdict(home_team: str, away_team: str) -> str:
     """
-    Apply cosmic factors to adjust base prediction probabilities.
-    Currently a placeholder that makes minor adjustments based on team names.
+    Generate a deterministic cosmic verdict for a match.
+
+    Uses a hash of the team names + today's date so the same matchup
+    on the same day always returns the same verdict, but changes daily.
+
+    Args:
+        home_team: Home team name
+        away_team: Away team name
+
+    Returns:
+        A cosmic verdict string with planet, element, and confidence.
     """
-    try:
-        # In a real implementation, this would use actual cosmic data
-        # For now, we'll make very minor adjustments based on team name length
-        # as a placeholder for more sophisticated logic
-        
-        home_factor = len(home_team) % 3 / 100
-        away_factor = len(away_team) % 3 / 100
-        
-        # Adjust probabilities slightly
-        home_prob = base_prediction["home"] + home_factor - away_factor
-        away_prob = base_prediction["away"] + away_factor - home_factor
-        
-        # Ensure probabilities stay within bounds
-        home_prob = max(0.1, min(0.8, home_prob))
-        away_prob = max(0.1, min(0.8, away_prob))
-        
-        # Calculate draw probability as the remainder
-        draw_prob = 1.0 - home_prob - away_prob
-        draw_prob = max(0.1, min(0.4, draw_prob))
-        
-        # Recalculate to ensure sum is exactly 1.0
-        total = home_prob + draw_prob + away_prob
-        home_prob /= total
-        draw_prob /= total
-        away_prob /= total
-        
-        return {
-            "home": home_prob,
-            "draw": draw_prob,
-            "away": away_prob
-        }
-    except Exception as e:
-        print(f"Cosmic verdict error: {str(e)}")
-        # Return the original prediction if cosmic calculation fails
-        return base_prediction
+    today = date.today().isoformat()
+    seed = f"{home_team}|{away_team}|{today}"
+    digest = hashlib.sha256(seed.encode()).hexdigest()
+
+    # Use different parts of the hash for each selection
+    planet_idx = int(digest[:4], 16) % len(_PLANETS)
+    element_idx = int(digest[4:8], 16) % len(_ELEMENTS)
+    verdict_idx = int(digest[8:12], 16) % len(_VERDICTS)
+    confidence_idx = int(digest[12:16], 16) % len(_CONFIDENCE)
+
+    planet = _PLANETS[planet_idx]
+    element = _ELEMENTS[element_idx]
+    verdict = _VERDICTS[verdict_idx]
+    confidence = _CONFIDENCE[confidence_idx]
+
+    return (
+        f"🪐 **Ruling Planet:** {planet}  |  "
+        f"🜂 **Element:** {element}\n\n"
+        f"{verdict}\n\n"
+        f"{confidence}"
+    )
