@@ -1,385 +1,599 @@
-# app.py — Main Streamlit entry point
+# app.py — Blackmosphere FootMob Edition
+# Modern, sophisticated football prediction interface
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
+from typing import Dict, List, Optional
 
-from config import LEAGUE_CODES, CSS
-from api import fetch_matches, fetch_standings
-from models import predict_match, kelly_stake, value_analysis
-from charts import prob_bar, score_heatmap, team_radar, pnl_chart
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTS
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ── Page Config ────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Blackmosphere Gold", page_icon="🏆", layout="wide")
+from config import (
+    CSS, LEAGUE_CODES, PINNACLE_LEAGUE_IDS, 
+    STATSBOMB_COMPS, RG_WARNING, MARKET_ICONS
+)
+from models import predict_match, kelly_stake, poisson_prob
+from cosmic import cosmic_verdict
+from sources import (
+    sofa_today_events, sofa_event_prediction, sofa_team_last5,
+    sb_team_xg, pinnacle_odds
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ═══════════════════════════════════════════════════════════════════════════
+
+st.set_page_config(
+    page_title="Blackmosphere | AI + Cosmic Predictions",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Inject modern CSS
 st.markdown(CSS, unsafe_allow_html=True)
 
-# ── API Key ────────────────────────────────────────────────────────────────────
-API_KEY = st.secrets.get("FOOTBALL_API_KEY", "")
+# ═══════════════════════════════════════════════════════════════════════════
+# SESSION STATE
+# ═══════════════════════════════════════════════════════════════════════════
 
-# ── Session State Init ─────────────────────────────────────────────────────────
 _defaults = {
-    'parlay':      [],
-    'bankroll':    1000.0,
+    'parlay': [],
+    'bankroll': 1000.0,
     'bet_history': [],
-    'standings':   {},
-    'last_res':    None,
+    'selected_date': date.today(),
+    'cosmic_toggle': True,
+    'value_threshold': 0.05,
+    'filters': {
+        'show_value_only': False,
+        'min_probability': 0.0,
+        'leagues': []
+    }
 }
+
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def load_today_matches() -> Dict[str, List[Dict]]:
+    """Load today's matches grouped by league."""
+    events = sofa_today_events()
+    if not events:
+        return {}
+    
+    grouped = {}
+    for e in events:
+        league = e.get('tournament', {}).get('category', {}).get('name', 'Other')
+        if league not in grouped:
+            grouped[league] = []
+        grouped[league].append({
+            'id': e.get('id'),
+            'home': e.get('homeTeam', {}).get('name', 'TBD'),
+            'away': e.get('awayTeam', {}).get('name', 'TBD'),
+            'home_id': e.get('homeTeam', {}).get('id'),
+            'away_id': e.get('awayTeam', {}).get('id'),
+            'start': e.get('startTimestamp', 0),
+            'time': datetime.fromtimestamp(e.get('startTimestamp', 0)).strftime('%H:%M'),
+            'league': league,
+            'venue': e.get('venue', {}).get('name', 'TBD'),
+            'status': e.get('status', {}).get('description', 'Scheduled')
+        })
+    return grouped
+
+
+def get_team_strength(team_id: int) -> float:
+    """Get team strength from recent performance."""
+    data = sofa_team_last5(team_id)
+    if not data:
+        return 1.0
+    goals = data.get('goals_scored_avg', 1.5)
+    conceded = data.get('goals_conceded_avg', 1.5)
+    return max(0.5, min(2.5, (goals + (2.5 - conceded)) / 2))
+
+
+def calculate_value(prob: float, odds: float) -> tuple:
+    """Calculate edge and value status."""
+    implied = 1 / odds
+    edge = prob - implied
+    is_value = edge > st.session_state.value_threshold
+    return edge, is_value
+
+
+def format_prob_bar(prob: float, color: str = "#2FD9C5") -> str:
+    """Create a styled probability bar."""
+    pct = prob * 100
+    return f"""
+    <div class="prob-bar-container">
+        <div class="prob-bar" style="width:{pct}%; background:{color};"></div>
+        <span class="prob-text">{pct:.1f}%</span>
+    </div>
+    """
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═══════════════════════════════════════════════════════════════════════════
+
 with st.sidebar:
-    st.markdown("<h3 style='text-align:center;'>🎯 Gold Ticket</h3>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class="sidebar-logo">
+        <span class="logo-icon">🔮</span>
+        <div class="logo-text">
+            <h2>BLACKMOSPHERE</h2>
+            <span>AI + COSMIC PREDICTIONS</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Date Picker
+    st.markdown("### 📅 Date")
+    selected_date = st.date_input(
+        "Match Date",
+        value=st.session_state.selected_date,
+        key="date_picker"
+    )
+    st.session_state.selected_date = selected_date
+    
+    # Cosmic Toggle
+    st.markdown("### 🔮 Cosmic Layer")
+    st.session_state.cosmic_toggle = st.toggle(
+        "Enable Esoteric Predictions",
+        value=st.session_state.cosmic_toggle
+    )
+    
+    # Filters
+    st.markdown("### ⚙️ Filters")
+    st.session_state.filters['show_value_only'] = st.toggle(
+        "Show Value Bets Only",
+        value=False
+    )
+    st.session_state.filters['min_probability'] = st.slider(
+        "Min Probability",
+        0.0, 1.0, 0.0, 0.05
+    )
+    
+    # League Filter
+    all_leagues = ["All Leagues", "Premier League", "La Liga", "Bundesliga", 
+                   "Serie A", "Ligue 1", "Champions League"]
+    selected_league = st.selectbox("Filter League", all_leagues)
+    
+    st.markdown("---")
+    
+    # Bankroll Display
+    st.markdown(f"""
+    <div class="bankroll-card">
+        <span class="label">💰 Bankroll</span>
+        <span class="amount">${st.session_state.bankroll:,.2f}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Bet Slip Summary
     if st.session_state.parlay:
-        running_odds = 1.0
-        for leg in st.session_state.parlay:
-            st.markdown(f"🔸 {leg['name']}  \n**@ {leg['odds']:.2f}**")
-            running_odds *= leg['odds']
-        st.divider()
-        st.markdown(f"**Combined: {running_odds:.2f}**")
-    else:
-        st.caption("No legs added yet.")
-    st.divider()
-    st.metric("Bankroll", f"${st.session_state.bankroll:,.2f}")
-    if not API_KEY:
-        st.warning("⚠️ No API key found.\nAdd it to `.streamlit/secrets.toml`.")
-
-# ── Header ─────────────────────────────────────────────────────────────────────
-st.markdown("<h1 style='text-align:center;'>🏆 BLACKMOSPHERE GOLD</h1>", unsafe_allow_html=True)
-st.markdown(
-    "<p style='text-align:center;color:#D4AF37;letter-spacing:4px;font-size:13px;'>"
-    "PREMIUM SPORTS PREDICTION ENGINE</p>",
-    unsafe_allow_html=True,
-)
-st.divider()
-
-tab1, tab2, tab3, tab4 = st.tabs(["🔮 Predictor", "⚽ Fixtures", "🎯 Gold Ticket", "📊 Bankroll"])
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — PREDICTOR
-# ══════════════════════════════════════════════════════════════════════════════
-with tab1:
-    st.markdown("### ⚙️ Match Setup")
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        league    = st.selectbox("League", list(LEAGUE_CODES.keys()))
-        home_name = st.text_input("Home Team Name", "Home Team")
-        away_name = st.text_input("Away Team Name", "Away Team")
-
-    with c2:
-        if st.button("📊 Auto-Load Strengths from Standings"):
-            data = fetch_standings(API_KEY, LEAGUE_CODES[league])
-            if data:
-                st.session_state.standings = data
-                st.toast(f"Loaded {len(data)} teams!", icon="📊")
-            else:
-                st.warning("Could not load standings. Check your API key and free-tier limits.")
-
-        if st.session_state.standings:
-            team_list = list(st.session_state.standings.keys())
-            h_sel     = st.selectbox("Select Home Team", team_list, key="h_sel")
-            a_sel     = st.selectbox("Select Away Team", team_list, key="a_sel")
-            home_str  = st.session_state.standings.get(h_sel, 1.0)
-            away_str  = st.session_state.standings.get(a_sel, 1.0)
-            home_name = h_sel
-            away_name = a_sel
-            st.caption(f"Derived — Home: **{home_str:.3f}** | Away: **{away_str:.3f}**")
-        else:
-            home_str = st.slider("Home Strength", 0.5, 2.5, 1.0, 0.05,
-                                 help="1.0 = league average. Click Auto-Load for real data.")
-            away_str = st.slider("Away Strength", 0.5, 2.5, 1.0, 0.05)
-
-    with c3:
-        st.markdown("**Bookmaker Odds (for value detection)**")
-        bookie_home = st.number_input("Home Win Odds", 1.01, 50.0, 2.00, 0.05, key="bh")
-        bookie_draw = st.number_input("Draw Odds",     1.01, 50.0, 3.30, 0.05, key="bd")
-        bookie_away = st.number_input("Away Win Odds", 1.01, 50.0, 3.80, 0.05, key="ba")
-
-    if st.button("⚡ CALCULATE PREDICTION", use_container_width=True):
-        res = predict_match(LEAGUE_CODES[league], home_str, away_str)
-        st.session_state.last_res = {
-            'res':  res,
-            'home': home_name,
-            'away': away_name,
-            'bh':   bookie_home,
-            'bd':   bookie_draw,
-            'ba':   bookie_away,
-            'hs':   home_str,
-            'as_':  away_str,
-        }
-        st.toast("Prediction ready!", icon="🔮")
-
-    # ── Results — rendered outside button block to avoid nesting issues ────────
-    if st.session_state.last_res:
-        d  = st.session_state.last_res
-        r  = d['res']
-        hn = d['home']
-        an = d['away']
-
-        # Probability metrics
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("HOME WIN",  f"{r['home']:.1%}",  f"Fair odds: {r['h_odds']:.2f}")
-        m2.metric("DRAW",      f"{r['draw']:.1%}",  f"Fair odds: {r['d_odds']:.2f}")
-        m3.metric("AWAY WIN",  f"{r['away']:.1%}",  f"Fair odds: {r['a_odds']:.2f}")
-        m4.metric("BTTS",      f"{r['btts']:.1%}")
-        m5.metric("OVER 2.5",  f"{r['over25']:.1%}")
-
-        # Charts
-        ch1, ch2, ch3 = st.columns(3)
-        with ch1:
-            st.plotly_chart(prob_bar(r, hn, an), use_container_width=True)
-        with ch2:
-            st.plotly_chart(score_heatmap(r['matrix']), use_container_width=True)
-        with ch3:
-            st.plotly_chart(team_radar(hn, an, d['hs'], d['as_']), use_container_width=True)
-
-        # Top correct scores table
-        st.markdown("#### 🎯 Most Likely Correct Scores")
-        score_df = pd.DataFrame(r['top_scores'], columns=['H', 'A', 'Prob'])
-        score_df['Score']       = score_df.apply(lambda row: f"{int(row.H)}-{int(row.A)}", axis=1)
-        score_df['Probability'] = score_df['Prob'].map('{:.2%}'.format)
-        st.dataframe(score_df[['Score', 'Probability']], use_container_width=True, hide_index=True)
-
-        # Value bet analysis
-        st.markdown("#### 💰 Value Bet Analysis")
-        markets = [
-            ("Home Win", r['home'], d['bh']),
-            ("Draw",     r['draw'], d['bd']),
-            ("Away Win", r['away'], d['ba']),
-        ]
-        for label, prob, b_odds in markets:
-            edge, is_val = value_analysis(prob, b_odds)
-            kelly        = kelly_stake(prob, b_odds, st.session_state.bankroll)
-            css          = "value-box" if is_val else "no-value"
-            icon         = "✅" if is_val else "❌"
-            st.markdown(
-                f"<div class='{css}'>"
-                f"{icon} <b>{label}</b> &nbsp;|&nbsp; "
-                f"Model: {prob:.1%} &nbsp;|&nbsp; "
-                f"Bookie implied: {1/b_odds:.1%} &nbsp;|&nbsp; "
-                f"Edge: {edge:+.1%} &nbsp;|&nbsp; "
-                f"Kelly Stake: <b>${kelly}</b>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-        # Add to Gold Ticket
-        st.markdown("#### ➕ Add Leg to Gold Ticket")
-        market_opts = {
-            "Home Win":  (r['home'],   r['h_odds']),
-            "Draw":      (r['draw'],   r['d_odds']),
-            "Away Win":  (r['away'],   r['a_odds']),
-            "BTTS":      (r['btts'],   r['btts_odds']),
-            "Over 2.5":  (r['over25'], r['over25_odds']),
-        }
-        chosen = st.selectbox("Select Market", list(market_opts.keys()), key="mkt_sel")
-        sel_prob, sel_odds = market_opts[chosen]
-
-        if st.button("➕ ADD TO GOLD TICKET", use_container_width=True):
-            st.session_state.parlay.append({
-                'name': f"{hn} vs {an} — {chosen}",
-                'odds': sel_odds,
-                'prob': sel_prob,
-            })
-            st.toast(f"Added: {chosen} @ {sel_odds:.2f}", icon="🎯")
-            st.rerun()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — FIXTURES
-# ══════════════════════════════════════════════════════════════════════════════
-with tab2:
-    st.markdown("### ⚽ Upcoming Fixtures")
-
-    col_slider, col_refresh = st.columns([4, 1])
-    days = col_slider.slider("Days ahead", 1, 14, 7)
-    if col_refresh.button("🔄 Refresh"):
-        st.cache_data.clear()
-        st.rerun()
-
-    matches = fetch_matches(API_KEY, days)
-
-    if not API_KEY:
-        st.error("API key missing. Add FOOTBALL_API_KEY to `.streamlit/secrets.toml`.")
-    elif not matches:
-        st.warning("No fixtures returned. You may have hit the free-tier rate limit — try again in a minute.")
-    else:
-        st.caption(f"{len(matches)} fixtures found")
-        for m in matches[:20]:
-            comp  = m['competition']['name']
-            hteam = m['homeTeam']['name']
-            ateam = m['awayTeam']['name']
-            utc   = m.get('utcDate', '')[:16].replace('T', ' ')
-
-            with st.expander(f"⚽  {hteam}  vs  {ateam}   |   {comp}   |   {utc} UTC"):
-                fa1, fa2 = st.columns(2)
-
-                if fa1.button("🔮 Analyze", key=f"an_{m['id']}"):
-                    code = LEAGUE_CODES.get(comp, 'PL')
-                    r    = predict_match(code)
-                    mc1, mc2, mc3, mc4 = st.columns(4)
-                    mc1.metric("Home",    f"{r['home']:.1%}")
-                    mc2.metric("Draw",    f"{r['draw']:.1%}")
-                    mc3.metric("Away",    f"{r['away']:.1%}")
-                    mc4.metric("BTTS",    f"{r['btts']:.1%}")
-                    st.plotly_chart(prob_bar(r, hteam, ateam), use_container_width=True)
-
-                if fa2.button("➕ Add Home Win", key=f"add_{m['id']}"):
-                    code = LEAGUE_CODES.get(comp, 'PL')
-                    r    = predict_match(code)
-                    st.session_state.parlay.append({
-                        'name': f"{hteam} vs {ateam} — Home Win",
-                        'odds': r['h_odds'],
-                        'prob': r['home'],
-                    })
-                    st.toast(f"Added {hteam} Home Win @ {r['h_odds']:.2f}", icon="🎯")
-                    st.rerun()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — GOLD TICKET
-# ══════════════════════════════════════════════════════════════════════════════
-with tab3:
-    st.markdown("### 🎯 YOUR GOLD TICKET")
-
-    if not st.session_state.parlay:
-        st.info("No legs added yet. Use the Predictor or Fixtures tabs to build your ticket.")
-    else:
-        total_odds    = 1.0
-        combined_prob = 1.0
-
+        st.markdown("### 🎯 Bet Slip")
+        total_odds = 1.0
         for i, leg in enumerate(st.session_state.parlay):
-            lc1, lc2, lc3 = st.columns([6, 1, 1])
-            lc1.write(f"🔸 {leg['name']}")
-            lc2.markdown(f"**{leg['odds']:.2f}**")
-            if lc3.button("✕", key=f"rm_{i}", help="Remove this leg"):
-                st.session_state.parlay.pop(i)
-                st.rerun()
-            total_odds    *= leg['odds']
-            combined_prob *= leg.get('prob', 0.5)
-
-        st.divider()
-        tm1, tm2, tm3 = st.columns(3)
-        tm1.metric("TOTAL ODDS",    f"{total_odds:.2f}")
-        tm2.metric("COMBINED PROB", f"{combined_prob:.2%}")
-        tm3.metric("EXPECTED VALUE", f"{combined_prob * total_odds:.3f}x",
-                   delta="Value" if combined_prob * total_odds >= 1.0 else "No value",
-                   delta_color="normal" if combined_prob * total_odds >= 1.0 else "inverse")
-
-        st.divider()
-        stake     = st.number_input("Stake ($)", min_value=1.0, max_value=10000.0,
-                                    value=10.0, step=1.0)
+            total_odds *= leg['odds']
+            st.markdown(f"""
+            <div class="slip-leg">
+                <span>{leg['name']}</span>
+                <strong>@ {leg['odds']:.2f}</strong>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div class="slip-total">
+            <span>Combined Odds</span>
+            <strong>{total_odds:.2f}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        stake = st.number_input("Stake ($)", min_value=1.0, value=10.0)
         potential = stake * total_odds
-        profit    = potential - stake
-
-        st.markdown(
-            f"<h3>💰 Potential Return: ${potential:,.2f} "
-            f"<span style='color:#888;font-size:16px;'>(Profit: ${profit:,.2f})</span></h3>",
-            unsafe_allow_html=True,
-        )
-
-        bc1, bc2 = st.columns(2)
-        if bc1.button("✅ LOG BET", use_container_width=True):
+        
+        st.markdown(f"""
+        <div class="potential-return">
+            Potential Return: <strong>${potential:,.2f}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("✅ LOG BET", use_container_width=True):
             st.session_state.bet_history.append({
-                'Date':       datetime.now().strftime('%Y-%m-%d %H:%M'),
-                'Legs':       len(st.session_state.parlay),
-                'Odds':       round(total_odds, 2),
-                'Stake ($)':  stake,
-                'Potential':  round(potential, 2),
-                'Model Prob': f"{combined_prob:.2%}",
-                'Result':     'Pending',
+                'Date': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                'Legs': len(st.session_state.parlay),
+                'Odds': round(total_odds, 2),
+                'Stake': stake,
+                'Potential': round(potential, 2),
+                'Result': 'Pending'
             })
-            # Deduct stake from bankroll immediately on logging
-            st.session_state.bankroll  -= stake
-            st.session_state.parlay     = []
-            st.toast("Bet logged! Settle it in the Bankroll tab.", icon="✅")
-            st.rerun()
-
-        if bc2.button("🗑️ CLEAR TICKET", use_container_width=True):
+            st.session_state.bankroll -= stake
             st.session_state.parlay = []
             st.rerun()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — BANKROLL
-# ══════════════════════════════════════════════════════════════════════════════
-with tab4:
-    st.markdown("### 📊 Bankroll Management")
-
-    br1, br2 = st.columns(2)
-    with br1:
-        new_br = st.number_input(
-            "Set / Reset Bankroll ($)",
-            min_value=0.0, max_value=1_000_000.0,
-            value=st.session_state.bankroll,
-            step=50.0,
-        )
-        if st.button("💾 UPDATE BANKROLL"):
-            st.session_state.bankroll = new_br
-            st.toast(f"Bankroll updated to ${new_br:,.2f}", icon="💰")
+        
+        if st.button("🗑️ Clear Slip", use_container_width=True):
+            st.session_state.parlay = []
             st.rerun()
-    br2.metric("Current Bankroll", f"${st.session_state.bankroll:,.2f}")
-
-    st.divider()
-    st.markdown("### 📋 Bet History")
-
-    if not st.session_state.bet_history:
-        st.info("No bets logged yet. Build a ticket and click LOG BET.")
     else:
-        # Settle bets
-        st.markdown("**Settle a bet:**")
-        sc1, sc2, sc3 = st.columns(3)
-        idx    = sc1.number_input("Row #", min_value=0,
-                                  max_value=max(0, len(st.session_state.bet_history) - 1),
-                                  step=1, value=0)
-        result = sc2.selectbox("Result", ["Pending", "Won", "Lost", "Void"])
+        st.info("No bets in slip. Add selections from match cards.")
+    
+    # Responsible Gaming
+    st.markdown("---")
+    st.markdown(RG_WARNING, unsafe_allow_html=True)
 
-        if sc3.button("✅ SETTLE"):
-            bet = st.session_state.bet_history[int(idx)]
-            if bet['Result'] != 'Pending':
-                st.warning("This bet is already settled.")
-            else:
-                bet['Result'] = result
-                if result == 'Won':
-                    # Return full payout (stake was already deducted on log)
-                    st.session_state.bankroll += bet['Potential']
-                    st.toast(f"Bet settled as WON! +${bet['Potential']:,.2f}", icon="🏆")
-                elif result == 'Void':
-                    # Stake refunded
-                    st.session_state.bankroll += bet['Stake ($)']
-                    st.toast("Bet voided — stake refunded.", icon="↩️")
-                else:
-                    st.toast("Bet settled as LOST.", icon="❌")
-                st.rerun()
 
-        # History table
-        hist_df = pd.DataFrame(st.session_state.bet_history)
-        st.dataframe(hist_df, use_container_width=True, hide_index=True)
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN CONTENT
+# ═══════════════════════════════════════════════════════════════════════════
 
-        # Summary metrics
-        st.divider()
-        total_staked = sum(b['Stake ($)']  for b in st.session_state.bet_history)
-        won_count    = sum(1 for b in st.session_state.bet_history if b['Result'] == 'Won')
-        lost_count   = sum(1 for b in st.session_state.bet_history if b['Result'] == 'Lost')
-        pending      = sum(1 for b in st.session_state.bet_history if b['Result'] == 'Pending')
+st.markdown("""
+<div class="main-header">
+    <div class="header-content">
+        <h1>⚽ Today's Matches</h1>
+        <p>AI-Powered Predictions with Cosmic Overlay</p>
+    </div>
+    <div class="header-stats">
+        <div class="stat-box">
+            <span class="stat-value" id="match_count">--</span>
+            <span class="stat-label">Matches</span>
+        </div>
+        <div class="stat-box">
+            <span class="stat-value" id="value_count">--</span>
+            <span class="stat-label">Value Bets</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Total Staked",   f"${total_staked:,.2f}")
-        s2.metric("Bets Won",       won_count)
-        s3.metric("Bets Lost",      lost_count)
-        s4.metric("Pending",        pending)
+# Load Matches
+with st.spinner("Loading today's fixtures..."):
+    matches_by_league = load_today_matches()
 
-        # P&L chart
-        fig = pnl_chart(st.session_state.bet_history)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
+if not matches_by_league:
+    st.markdown("""
+    <div class="empty-state">
+        <span class="empty-icon">📅</span>
+        <h3>No Matches Today</h3>
+        <p>Select a different date or check back later.</p>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    # Filter leagues
+    if selected_league != "All Leagues":
+        matches_by_league = {selected_league: matches_by_league.get(selected_league, [])}
+    
+    total_matches = sum(len(v) for v in matches_by_league.values())
+    value_bets = 0
+    
+    # Update header stats
+    st.markdown(f"""
+    <script>
+        document.getElementById('match_count').textContent = '{total_matches}';
+    </script>
+    """, unsafe_allow_html=True)
+    
+    # Render League Sections
+    for league_name, matches in matches_by_league.items():
+        if not matches:
+            continue
+            
+        # League Header
+        league_code = LEAGUE_CODES.get(league_name, 'OT')
+        st.markdown(f"""
+        <div class="league-header">
+            <span class="league-badge">{league_code}</span>
+            <h2>{league_name}</h2>
+            <span class="match-count">{len(matches)} matches</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Match Cards
+        for match in matches:
+            with st.container():
+                # Get team strengths
+                home_str = get_team_strength(match.get('home_id', 0))
+                away_str = get_team_strength(match.get('away_id', 0))
+                
+                # Generate predictions
+                league_key = LEAGUE_CODES.get(league_name, 'PL')
+                pred = predict_match(league_key, home_str, away_str)
+                
+                # Cosmic verdict
+                cosmic = None
+                if st.session_state.cosmic_toggle:
+                    cosmic = cosmic_verdict(
+                        match['home'], match['away'],
+                        home_str, away_str, 
+                        st.session_state.selected_date
+                    )
+                
+                # Check for value bets
+                value_count = 0
+                markets_to_check = [
+                    ('Home Win', pred['home'], pred['h_odds']),
+                    ('Draw', pred['draw'], pred['d_odds']),
+                    ('Away Win', pred['away'], pred['a_odds']),
+                    ('Over 2.5', pred['over25'], pred['over25_odds']),
+                    ('BTTS', pred['btts'], pred['btts_odds'])
+                ]
+                for _, prob, odds in markets_to_check:
+                    edge, is_val = calculate_value(prob, odds)
+                    if is_val:
+                        value_count += 1
+                
+                value_bets += value_count
+                
+                # Filter by value toggle
+                if st.session_state.filters['show_value_only'] and value_count == 0:
+                    continue
+                
+                # ─── MATCH CARD ─────────────────────────────────────────────
+                st.markdown(f"""
+                <div class="match-card" id="match_{match['id']}">
+                    <div class="card-top">
+                        <div class="match-info">
+                            <span class="match-time">{match['time']}</span>
+                            <span class="match-status">{match['status']}</span>
+                        </div>
+                        <div class="match-venue">📍 {match['venue']}</div>
+                    </div>
+                    
+                    <div class="teams-row">
+                        <div class="team home-team">
+                            <div class="team-crest">🏠</div>
+                            <span class="team-name">{match['home']}</span>
+                            <div class="strength-bar">
+                                <div class="strength-fill" style="width:{home_str*40}%"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="match-center">
+                            <span class="vs">VS</span>
+                            <div class="prob-summary">
+                                <span class="prob-home">{pred['home']:.0%}</span>
+                                <span class="prob-draw">{pred['draw']:.0%}</span>
+                                <span class="prob-away">{pred['away']:.0%}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="team away-team">
+                            <div class="team-crest">✈️</div>
+                            <span class="team-name">{match['away']}</span>
+                            <div class="strength-bar">
+                                <div class="strength-fill" style="width:{away_str*40}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # ─── PREDICTION TABS ─────────────────────────────────────────
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "🎯 Main Bets", "⚽ Goals", "📊 Corners & Cards", 
+                    "🎯 Correct Score", "🔮 Cosmic"
+                ])
+                
+                # TAB 1: Main Bets (1X2, Double Chance)
+                with tab1:
+                    c1, c2, c3 = st.columns(3)
+                    
+                    # 1X2
+                    with c1:
+                        st.markdown("**Match Result (1X2)**")
+                        h_edge, h_val = calculate_value(pred['home'], pred['h_odds'])
+                        d_edge, d_val = calculate_value(pred['draw'], pred['d_odds'])
+                        a_edge, a_val = calculate_value(pred['away'], pred['a_odds'])
+                        
+                        for label, prob, odds, edge, is_val in [
+                            ("1", pred['home'], pred['h_odds'], h_edge, h_val),
+                            ("X", pred['draw'], pred['d_odds'], d_edge, d_val),
+                            ("2", pred['away'], pred['a_odds'], a_edge, a_val)
+                        ]:
+                            val_tag = "✅" if is_val else ""
+                            st.markdown(f"""
+                            <div class="bet-row" onclick="addToSlip('{label}', {odds})">
+                                <span class="bet-label">{label} {val_tag}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Double Chance
+                    with c2:
+                        st.markdown("**Double Chance**")
+                        dc_1x = pred['home'] + pred['draw']
+                        dc_x2 = pred['draw'] + pred['away']
+                        dc_12 = pred['home'] + pred['away']
+                        
+                        for label, prob in [("1X", dc_1x), ("X2", dc_x2), ("12", dc_12)]:
+                            odds = 1 / prob if prob > 0 else 1
+                            st.markdown(f"""
+                            <div class="bet-row">
+                                <span class="bet-label">{label}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Both Teams To Score
+                    with c3:
+                        st.markdown("**Both Teams To Score**")
+                        btts_yes = pred['btts']
+                        btts_no = 1 - btts_yes
+                        
+                        for label, prob in [("BTTS Yes", btts_yes), ("BTTS No", btts_no)]:
+                            odds = 1 / prob if prob > 0 else 1
+                            st.markdown(f"""
+                            <div class="bet-row">
+                                <span class="bet-label">{label}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                
+                # TAB 2: Goals
+                with tab2:
+                    c1, c2, c3 = st.columns(3)
+                    
+                    with c1:
+                        st.markdown("**Over/Under 2.5**")
+                        for label, prob in [("Over 2.5", pred['over25']), ("Under 2.5", 1-pred['over25'])]:
+                            odds = pred.get('over25_odds', 1.85) if 'Over' in label else pred.get('under25_odds', 1.95)
+                            st.markdown(f"""
+                            <div class="bet-row">
+                                <span class="bet-label">{label}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    with c2:
+                        st.markdown("**Over/Under 3.5**")
+                        over35 = pred.get('over35', 0.35)
+                        for label, prob in [("Over 3.5", over35), ("Under 3.5", 1-over35)]:
+                            odds = 2.10 if 'Over' in label else 1.70
+                            st.markdown(f"""
+                            <div class="bet-row">
+                                <span class="bet-label">{label}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    
+                    with c3:
+                        st.markdown("**First Half Goals**")
+                        fh_over = pred.get('fh_over15', 0.60)
+                        for label, prob in [("Over 1.5 HT", fh_over), ("Under 1.5 HT", 1-fh_over)]:
+                            odds = 2.05 if 'Over' in label else 1.75
+                            st.markdown(f"""
+                            <div class="bet-row">
+                                <span class="bet-label">{label}</span>
+                                <span class="bet-odds">{odds:.2f}</span>
+                                <span class="bet-prob">{prob:.0%}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                
+                # TAB 3: Corners & Cards
+                with tab3:
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        st.markdown("**Corner Markets**")
+                        if 'corners' in pred:
+                            for label, prob in pred['corners'].items():
+                                odds = 1.95
+                                st.markdown(f"""
+                                <div class="bet-row">
+                                    <span class="bet-label">{label}</span>
+                                    <span class="bet-odds">{odds:.2f}</span>
+                                    <span class="bet-prob">{prob:.0%}</span>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        else:
+                            st.caption("Corner data unavailable")
+                    
+                    with c2:
+                        st.markdown("**Booking Markets**")
+                        if 'bookings' in pred:
+                            for label, prob in pred['bookings'].items():
+                                odds = 1.90
+                                st.markdown(f"""
+                                <div class="bet-row">
+                                    <span class="bet-label">{label}</span>
+                                    <span class="bet-odds">{odds:.2f}</span>
+                                    <span class="bet-prob">{prob:.0%}</span>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        else:
+                            st.caption("Booking data unavailable")
+                
+                # TAB 4: Correct Score
+                with tab4:
+                    st.markdown("**Most Likely Correct Scores**")
+                    
+                    if 'top_scores' in pred:
+                        scores_data = []
+                        for score, prob in pred['top_scores'][:8]:
+                            odds = 1 / prob if prob > 0 else 1
+                            scores_data.append({
+                                'Score': f"{int(score[0])}-{int(score[1])}",
+                                'Prob': f"{prob:.1%}",
+                                'Odds': f"{odds:.2f}"
+                            })
+                        
+                        st.dataframe(
+                            pd.DataFrame(scores_data),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.caption("Correct score probabilities unavailable")
+                    
+                    st.markdown("**Highest Scoring Half**")
+                    if 'highest_half' in pred:
+                        h1, h2, h3 = st.columns(3)
+                        h1.metric("1st Half", f"{pred['highest_half'].get('first', 0):.0%}")
+                        h2.metric("Equal", f"{pred['highest_half'].get('equal', 0):.0%}")
+                        h3.metric("2nd Half", f"{pred['highest_half'].get('second', 0):.0%}")
+                
+                # TAB 5: Cosmic
+                with tab5:
+                    if cosmic:
+                        st.markdown(f"""
+                        <div class="cosmic-dashboard">
+                            <div class="cosmic-master">
+                                <span class="cosmic-label">MASTER PICK</span>
+                                <span class="cosmic-pick">{cosmic['master_pick']}</span>
+                                <span class="cosmic-conf">Confidence: {cosmic['confidence']:.0%}</span>
+                            </div>
+                            
+                            <div class="cosmic-grid">
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">🔢</span>
+                                    <span class="cosmic-title">Numerology</span>
+                                    <span class="cosmic-value">{cosmic['numerology']['verdict']}</span>
+                                </div>
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">🌙</span>
+                                    <span class="cosmic-title">Moon Phase</span>
+                                    <span class="cosmic-value">{cosmic['moon']['phase']}</span>
+                                </div>
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">🪐</span>
+                                    <span class="cosmic-title">Day Ruler</span>
+                                    <span class="cosmic-value">{cosmic['ruler']['planet']}</span>
+                                </div>
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">📖</span>
+                                    <span class="cosmic-title">Nakshatra</span>
+                                    <span class="cosmic-value">{cosmic['nakshatra']['name']}</span>
+                                </div>
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">⚖️</span>
+                                    <span class="cosmic-title">Weor Law</span>
+                                    <span class="cosmic-value">{cosmic['weor']['verdict'][:30]}...</span>
+                                </div>
+                                <div class="cosmic-item">
+                                    <span class="cosmic-icon">🧬</span>
+                                    <span class="cosmic-title">Biorhythm</span>
+                                    <span class="cosmic-value">{cosmic['biorhythm']['verdict'][:25]}...</span>
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.info("Cosmic predictions disabled. Toggle on in sidebar.")
+                
+                st.markdown("</div>", unsafe_allow_html=True)  # Close match card
 
-        # CSV export
-        st.divider()
-        csv = hist_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Export Bet History as CSV",
-            data=csv,
-            file_name=f"blackmosphere_bets_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-)
+# Update value count
+st.markdown(f"""
+<script>
+    document.getElementById('value_count').textContent = '{value_bets}';
+</script>
+""", unsafe_allow_html=True)
